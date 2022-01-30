@@ -7,8 +7,13 @@ stages = ['Wake', 'REM', 'N1', 'N2', 'N3']
 
 
 class DataLoader:
-    def __init__(self, dir_path: str):
+    def __init__(self, dir_path: str, features: str):
         self.dir_path = dir_path
+        if features and os.path.exists(features) and os.path.isfile(features):
+            with open(features, 'r') as f:
+                self.features = [line.rstrip('\n') for line in f.readlines()]
+        elif features:
+            self.features = str.split(features, sep=',')
 
     def _load_npz_file(self, npz_file):
         """Load data and labels from a npz file."""
@@ -28,12 +33,13 @@ class DataLoader:
         """Load data and labels from a CSV file."""
         with open(csv_file, "r") as csvfile:
             datareader = csv.reader(csvfile)
-            next(datareader)  # yield the header row
+            header = next(datareader)  # yield the header row
             data = []
             labels = []
             for row in datareader:
                 labels.append(stages.index(row[0]))
-                data.append(np.array(row[1:], dtype=np.float64))
+                features = row[1:] if self.features is None else [row[header.index(name)] for name in self.features]
+                data.append(np.array(features, dtype=np.float64))
             data = np.vstack(data)
             labels = np.array(labels, dtype=np.int)
         return data, labels

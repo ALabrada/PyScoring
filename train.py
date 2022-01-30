@@ -20,7 +20,7 @@ def _print_n_samples_each_class(labels):
 
 def _create_model(model: str, data):
     if model == 'RF':
-        return RandomForestClassifier(n_estimators=100, min_samples_leaf=2)
+        return RandomForestClassifier(n_estimators=100, max_depth=15)
     elif model == 'SVM':
         return svm.SVC(gamma=0.001, C=100.)
     elif model == 'NB':
@@ -28,17 +28,15 @@ def _create_model(model: str, data):
     elif model == 'MLP':
         layers = math.ceil((data.shape[1] + len(stages))/2)
         return MLPClassifier(hidden_layer_sizes=(layers,),
-                             learning_rate_init=0.3,
-                             max_iter=100,
-                             momentum=0.2)
+                             max_iter=500)
     elif model == 'LDA':
         return LinearDiscriminantAnalysis()
     else:
         raise Exception(f'Invalid model {model}.')
 
 
-def train(input_path: str, output_path: str, model_name: str):
-    loader = DataLoader(dir_path=input_path)
+def train(input_path: str, output_path: str, model_name: str, features: str):
+    loader = DataLoader(dir_path=input_path, features=features)
     data, labels = loader.load_data()
 
     trainer = _create_model(model_name, data)
@@ -49,8 +47,8 @@ def train(input_path: str, output_path: str, model_name: str):
     return classifier
 
 
-def cross(input_path: str, model_name: str, n_folds: int):
-    loader = DataLoader(dir_path=input_path)
+def cross(input_path: str, model_name: str, n_folds: int, features: str):
+    loader = DataLoader(dir_path=input_path, features=features)
     data, labels = loader.load_data()
     print('Loaded dataset from', input_path)
     _print_n_samples_each_class(labels)
@@ -74,6 +72,8 @@ if __name__ == '__main__':
                         help='Input file or directory that contains the training cases.')
     parser.add_argument('--model', type=str, default='RF', choices=['RF', 'SVM', 'NB', 'MLP', 'LDA'],
                         help='Name of the classifier to build')
+    parser.add_argument('--features', type=str,
+                        help='Comma separated list of features or path of a file that contains the features.')
     parser.add_argument('--folds', type=int, default=0,
                         help='Number of folds for cross validation.')
     parser.add_argument('--output', type=str,
@@ -83,13 +83,15 @@ if __name__ == '__main__':
         print('Training classifier')
         train(input_path=args.input,
               output_path=args.output,
-              model_name=args.model)
+              model_name=args.model,
+              features=args.features)
         print('Trained model saved to', args.output)
     if args.folds and args.folds > 1:
         print(f'Performing {args.folds}-fold cross-validation')
         scores = cross(input_path=args.input,
                        model_name=args.model,
-                       n_folds=args.folds)
+                       n_folds=args.folds,
+                       features=args.features)
         print('Scoring results:')
         for (key, value) in scores.items():
             print(f'{key} = {np.mean(value):.4f} ± {np.std(value):.4f} ({np.min(value):.2f} - {np.max(value):.2f})')
