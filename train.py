@@ -4,6 +4,8 @@ from sklearn.metrics import make_scorer, accuracy_score, cohen_kappa_score, f1_s
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import cross_validate
 from argparse import ArgumentParser
 import numpy as np
@@ -20,15 +22,22 @@ def _print_n_samples_each_class(labels):
 
 def _create_model(model: str, data):
     if model == 'RF':
-        return RandomForestClassifier(n_estimators=100, max_depth=15)
+        return RandomForestClassifier(
+            n_estimators=100,
+            max_depth=15,
+            criterion='entropy',
+            class_weight='balanced'
+        )
     elif model == 'SVM':
-        return svm.SVC(gamma=0.001, C=100.)
+        svc = svm.LinearSVC(C=1, dual=False, class_weight='balanced')
+        return make_pipeline(StandardScaler(), svc)
     elif model == 'NB':
-        return naive_bayes()
+        return make_pipeline(StandardScaler(), naive_bayes())
     elif model == 'MLP':
         layers = math.ceil((data.shape[1] + len(stages))/2)
-        return MLPClassifier(hidden_layer_sizes=(layers,),
-                             max_iter=500)
+        net = MLPClassifier(hidden_layer_sizes=(layers,),
+                            max_iter=500)
+        return make_pipeline(StandardScaler(), net)
     elif model == 'LDA':
         return LinearDiscriminantAnalysis()
     else:
@@ -62,7 +71,7 @@ def cross(input_path: str, model_name: str, n_folds: int, features: str):
     return cross_validate(trainer, data, labels,
                           cv=n_folds,
                           scoring=scorers,
-                          verbose=2,
+                          verbose=3,
                           n_jobs=4)
 
 
