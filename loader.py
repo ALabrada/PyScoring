@@ -14,6 +14,8 @@ class DataLoader:
                 self.features = [line.rstrip('\n') for line in f.readlines()]
         elif features:
             self.features = str.split(features, sep=',')
+        else:
+            self.features = None
 
     def _load_npz_file(self, npz_file):
         """Load data and labels from a npz file."""
