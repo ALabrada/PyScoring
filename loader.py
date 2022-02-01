@@ -7,8 +7,9 @@ stages = ['Wake', 'REM', 'N1', 'N2', 'N3']
 
 
 class DataLoader:
-    def __init__(self, dir_path: str, features: str):
+    def __init__(self, dir_path: str, features: str = None):
         self.dir_path = dir_path
+        self.all_features = []
         if features and os.path.exists(features) and os.path.isfile(features):
             with open(features, 'r') as f:
                 self.features = [line.rstrip('\n') for line in f.readlines()]
@@ -44,6 +45,7 @@ class DataLoader:
                 data.append(np.array(features, dtype=np.float64))
             data = np.vstack(data)
             labels = np.array(labels, dtype=np.int)
+        self.all_features = header[1:]
         return data, labels
 
     def load_data(self):
