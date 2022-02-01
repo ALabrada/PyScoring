@@ -1,21 +1,41 @@
 from loader import DataLoader, stages
-from sklearn import svm, naive_bayes
+from sklearn import svm
+from sklearn.base import BaseEstimator, MetaEstimatorMixin
 from sklearn.metrics import make_scorer, accuracy_score, cohen_kappa_score, f1_score
+from sklearn.naive_bayes import GaussianNB
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler, RobustScaler
-from sklearn.pipeline import make_pipeline
-from sklearn.feature_selection import mutual_info_classif, SelectKBest, SelectFromModel, RFE
+from sklearn.pipeline import make_pipeline, Pipeline
+from sklearn.feature_selection import SelectorMixin
+from sklearn.feature_selection import mutual_info_classif, SelectKBest, SelectFromModel, RFE, RFECV
 from sklearn.feature_selection import SequentialFeatureSelector
-from sklearn.model_selection import cross_validate
 from imblearn.under_sampling import RandomUnderSampler
 from argparse import ArgumentParser
 import numpy as np
 import math
-from joblib import dump
+import pandas as pd
+import pymrmr
+
+
+class MRMRSelector(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
+    def __init__(self, feature_count: int, mode: str = 'MID'):
+        self.mode = mode
+        self.feature_count = feature_count
+
+    def fit(self, X, y, **fit_params):
+        features = [f'F{i + 1}' for i in range(0, X.shape[1])]
+        frame = pd.DataFrame(X, columns=features)
+        frame.insert(0, 'Label', y)
+
+        selection = pymrmr.mRMR(frame, self.mode, self.feature_count)
+        self.support_ = np.asarray([f in selection for f in features], dtype=np.bool8)
+
+    def _get_support_mask(self):
+        return self.support_
 
 
 def _print_n_samples_each_class(labels):
@@ -33,7 +53,14 @@ def _create_model(model: str, data, max_features: int):
             criterion='entropy',
             class_weight='balanced'
         )
-        return SelectFromModel(dt, prefit=True, max_features=max_features)
+        return RFECV(
+            dt,
+            step=5,
+            min_features_to_select=max_features,
+            scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
+            n_jobs=4,
+            verbose=3
+        )
     elif model == 'RF':
         rf = RandomForestClassifier(
             n_estimators=100,
@@ -41,28 +68,80 @@ def _create_model(model: str, data, max_features: int):
             criterion='entropy',
             class_weight='balanced'
         )
-        return SelectFromModel(rf, prefit=True, max_features=max_features)
+        return RFECV(
+            rf,
+            step=5,
+            min_features_to_select=max_features,
+            scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
+            n_jobs=4,
+            verbose=3
+        )
     elif model == 'SVM':
         svc = svm.LinearSVC(C=1, dual=False, class_weight='balanced')
-        return make_pipeline(StandardScaler(),
-                             SelectFromModel(svc, prefit=True, max_features=max_features))
+        rfe = RFECV(
+            svc,
+            step=5,
+            min_features_to_select=max_features,
+            scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
+            n_jobs=4,
+            verbose=3
+        )
+        return make_pipeline(StandardScaler(), rfe)
     elif model == 'NB':
-        return make_pipeline(StandardScaler(),
-                             SequentialFeatureSelector(naive_bayes(), n_features_to_select=max_features))
+        sfs = SequentialFeatureSelector(
+            GaussianNB(),
+            n_features_to_select=max_features,
+            direction='backward',
+            scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
+            n_jobs=4
+        )
+        return make_pipeline(StandardScaler(), sfs)
     elif model == 'MLP':
         layers = math.ceil((data.shape[1] + len(stages))/2)
-        net = MLPClassifier(hidden_layer_sizes=(layers,),
-                            alpha=0.001,
-                            max_iter=500)
-        return make_pipeline(StandardScaler(), SequentialFeatureSelector(net, n_features_to_select=max_features))
+        net = MLPClassifier(
+            hidden_layer_sizes=(layers,),
+            alpha=0.001,
+            max_iter=500
+        )
+        sfs = SequentialFeatureSelector(
+            net,
+            n_features_to_select=max_features,
+            direction='backward',
+            scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
+            n_jobs=4
+        )
+        return make_pipeline(StandardScaler(), sfs)
     elif model == 'LDA':
-        return SelectFromModel(LinearDiscriminantAnalysis(), prefit=True, max_features=max_features)
+        return RFECV(
+            LinearDiscriminantAnalysis(),
+            step=1,
+            min_features_to_select=max_features,
+            scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
+            n_jobs=4,
+            verbose=3
+        )
     elif model == 'QDA':
-        return SelectFromModel(QuadraticDiscriminantAnalysis(), prefit=True, max_features=max_features)
+        return RFECV(
+            QuadraticDiscriminantAnalysis(),
+            step=5,
+            min_features_to_select=max_features,
+            scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
+            n_jobs=4,
+            verbose=3
+        )
     elif model == 'GMM':
-        return SelectFromModel(GaussianMixture(), prefit=True, max_features=max_features)
+        sfs = SequentialFeatureSelector(
+            GaussianMixture(),
+            n_features_to_select=max_features,
+            direction='backward',
+            scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
+            n_jobs=4
+        )
+        return make_pipeline(StandardScaler(), sfs)
     elif model == 'MI':
         return SelectKBest(mutual_info_classif, k=max_features)
+    elif model == 'mRMR':
+        return make_pipeline(StandardScaler(), MRMRSelector(feature_count=max_features))
     else:
         raise Exception(f'Invalid model {model}.')
 
@@ -83,7 +162,12 @@ def fselect(input_path: str, output_path: str, model_name: str, max_features: in
     print('Selecting features...')
     model = model.fit(data, labels)
 
-    features = np.asarray(loader.all_features)[model.get_support()]
+    if isinstance(model, Pipeline):
+        mask = model.steps[-1][1].get_support()
+    else:
+        mask = model.get_support()
+
+    features = np.asarray(loader.all_features)[mask]
 
     if output_path:
         print('Saving selected features to', output_path)
@@ -98,7 +182,7 @@ if __name__ == '__main__':
     parser.add_argument('--input', type=str, required=True,
                         help='Input file or directory that contains the training cases.')
     parser.add_argument('--model', type=str, default='RF',
-                        choices=['DT', 'RF', 'SVM', 'NB', 'MLP', 'LDA', 'QDA', 'GMM', 'MI'],
+                        choices=['DT', 'RF', 'SVM', 'NB', 'MLP', 'LDA', 'QDA', 'GMM', 'MI', 'mRMR'],
                         help='Name of the classifier to build')
     parser.add_argument('--features', type=int, default=40,
                         help='Maximum number of features to select')

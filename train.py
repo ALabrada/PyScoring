@@ -1,8 +1,9 @@
 from loader import DataLoader, stages
-from sklearn import svm, naive_bayes
+from sklearn import svm
 from sklearn.metrics import make_scorer, accuracy_score, cohen_kappa_score, f1_score
+from sklearn.naive_bayes import GaussianNB
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 from sklearn.mixture import GaussianMixture
@@ -42,7 +43,7 @@ def _create_model(model: str, data):
         svc = svm.LinearSVC(C=1, dual=False, class_weight='balanced')
         return make_pipeline(StandardScaler(), svc)
     elif model == 'NB':
-        return make_pipeline(StandardScaler(), naive_bayes())
+        return make_pipeline(StandardScaler(), GaussianNB())
     elif model == 'MLP':
         layers = math.ceil((data.shape[1] + len(stages))/2)
         net = MLPClassifier(hidden_layer_sizes=(layers,),
