@@ -10,8 +10,8 @@ def export(model_path: str, output_path: str):
     features = classifier.n_features_in_ if hasattr(classifier, 'n_features_in_') else None
 
     print('Converting the classifier to ONNX')
-    initial_type = [('float_input', FloatTensorType([None, features]))]
-    onx = convert_sklearn(classifier, initial_types=initial_type, verbose=1)
+    initial_type = [('features', FloatTensorType([None, features]))]
+    onx = convert_sklearn(classifier, initial_types=initial_type, verbose=1, target_opset=7)
 
     print('Saving ONNX model to', output_path)
     with open(output_path, "wb") as f:

@@ -9,7 +9,7 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticD
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.pipeline import make_pipeline
-from sklearn.model_selection import cross_validate
+from sklearn.model_selection import cross_validate, StratifiedGroupKFold
 from imblearn.under_sampling import RandomUnderSampler
 from argparse import ArgumentParser
 import numpy as np
@@ -40,7 +40,11 @@ def _create_model(model: str, data):
             class_weight='balanced'
         )
     elif model == 'SVM':
-        svc = svm.LinearSVC(C=1, dual=False, class_weight='balanced')
+        svc = svm.LinearSVC(
+            C=1,
+            dual=False,
+            max_iter=2000,
+            class_weight='balanced')
         return make_pipeline(StandardScaler(), svc)
     elif model == 'NB':
         return make_pipeline(StandardScaler(), GaussianNB())
@@ -61,11 +65,8 @@ def _create_model(model: str, data):
 
 
 def train(input_path: str, output_path: str, model_name: str, features: str, balance: bool):
-    loader = DataLoader(dir_path=input_path, features=features)
-    data, labels = loader.load_data()
-
-    if balance:
-        data, labels = RandomUnderSampler().fit_resample(data, labels)
+    loader = DataLoader(dir_path=input_path, features=features, balance=balance)
+    data, labels, _ = loader.load_data()
 
     trainer = _create_model(model_name, data)
     classifier = trainer.fit(data, labels)
@@ -76,15 +77,10 @@ def train(input_path: str, output_path: str, model_name: str, features: str, bal
 
 
 def cross(input_path: str, model_name: str, n_folds: int, features: str, balance: bool):
-    loader = DataLoader(dir_path=input_path, features=features)
-    data, labels = loader.load_data()
+    loader = DataLoader(dir_path=input_path, features=features, balance=balance)
+    data, labels, groups = loader.load_data()
     print('Loaded dataset from', input_path)
     _print_n_samples_each_class(labels)
-
-    if balance:
-        data, labels = RandomUnderSampler().fit_resample(data, labels)
-        print('Balanced dataset:')
-        _print_n_samples_each_class(labels)
 
     trainer = _create_model(model_name, data)
     scorers = {
@@ -92,11 +88,20 @@ def cross(input_path: str, model_name: str, n_folds: int, features: str, balance
         'kappa': make_scorer(cohen_kappa_score),
         'f1': make_scorer(lambda x, y: f1_score(x, y, average="macro"))
     }
-    return cross_validate(trainer, data, labels,
-                          cv=n_folds,
-                          scoring=scorers,
-                          verbose=3,
-                          n_jobs=4)
+    n_groups = groups.nunique()
+    if n_groups <= n_folds:
+        return cross_validate(trainer, data, labels,
+                              cv=n_folds,
+                              scoring=scorers,
+                              verbose=3,
+                              n_jobs=4)
+    else:
+        cv = StratifiedGroupKFold(n_splits=n_folds)
+        return cross_validate(trainer, data, labels,
+                              cv=cv,
+                              scoring=scorers,
+                              verbose=3,
+                              n_jobs=4)
 
 
 if __name__ == '__main__':

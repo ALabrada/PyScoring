@@ -1,15 +1,17 @@
 import numpy as np
+import pandas as pd
 import os
 import csv
 import h5py
+from imblearn.under_sampling import RandomUnderSampler
 
-stages = ['Wake', 'REM', 'N1', 'N2', 'N3']
+stages = ['Wake', 'N1', 'N2', 'N3', 'REM']
 
 
 class DataLoader:
-    def __init__(self, dir_path: str, features: str = None):
+    def __init__(self, dir_path: str, features: str = None, balance: bool = False):
         self.dir_path = dir_path
-        self.all_features = []
+        self.balance = balance
         if features and os.path.exists(features) and os.path.isfile(features):
             with open(features, 'r') as f:
                 self.features = [line.rstrip('\n') for line in f.readlines()]
@@ -23,49 +25,59 @@ class DataLoader:
         with np.load(npz_file) as f:
             data = f["x"]
             labels = f["y"]
-        return data, labels
+            headers = f["features"]
+        frame = pd.DataFrame(data, columns=headers)
+        return frame, labels
 
     def _load_h5_file(self, h5_file):
         """Load data and labels from a HDF5 file."""
         with h5py.File(h5_file, 'r') as f:
-            data = np.array(f.get("x"))
-            labels = np.array(f.get("y"))
-        return data, labels
+            data = np.asarray(f.get("x"), dtype=np.float64)
+            # labels = np.asarray([stages.index(y) for y in f.get("y")], dtype=np.int32)
+            labels = np.asarray(f.get("y"), dtype=np.str_)
+            headers = np.asarray(f.get("features"), dtype=np.str_)
+        frame = pd.DataFrame(data, columns=headers)
+        labels = pd.Series(data=labels).map({value: idx for idx, value in enumerate(stages)})
+        return frame, labels
 
     def _load_csv_file(self, csv_file: str):
         """Load data and labels from a CSV file."""
-        with open(csv_file, "r") as csvfile:
-            datareader = csv.reader(csvfile)
-            header = next(datareader)  # yield the header row
-            data = []
-            labels = []
-            for row in datareader:
-                labels.append(stages.index(row[0]))
-                features = row[1:] if self.features is None else [row[header.index(name)] for name in self.features]
-                data.append(np.array(features, dtype=np.float64))
-            data = np.vstack(data)
-            labels = np.array(labels, dtype=np.int)
-        self.all_features = header[1:]
-        return data, labels
+        frame: pd.DataFrame = pd.read_csv(csv_file, encoding='utf-8-sig')
+        labels = frame.pop('Label')
+        labels = labels.map({value: idx for idx, value in enumerate(stages)})
+        return frame, labels
 
-    def load_data(self):
-        allfiles = os.listdir(self.dir_path) if os.path.isdir(self.dir_path) else [self.dir_path]
-        data = []
-        labels = []
-        for fname in allfiles:
+    def load_frames(self):
+        allfiles = [os.path.join(self.dir_path, x) for x in os.listdir(self.dir_path)] if os.path.isdir(self.dir_path) \
+            else [self.dir_path]
+        result: pd.DataFrame = None
+        for idx, fname in enumerate(allfiles):
             print("Loading {} ...".format(fname))
             if ".npz" in fname:
-                tmp_data, tmp_labels = self._load_npz_file(fname)
+                data, labels = self._load_npz_file(fname)
             elif ".csv" in fname:
-                tmp_data, tmp_labels = self._load_csv_file(fname)
+                data, labels = self._load_csv_file(fname)
             elif ".h5" in fname:
-                tmp_data, tmp_labels = self._load_h5_file(fname)
+                data, labels = self._load_h5_file(fname)
             else:
                 continue
-            data.append(tmp_data)
-            labels.append(tmp_labels)
-        data = np.vstack(data)
-        labels = np.hstack(labels)
+            if self.balance:
+                data, labels = RandomUnderSampler().fit_resample(data, labels)
+            if self.features:
+                for c in data.columns:
+                    if c not in self.features:
+                        data.pop(c)
+                assert len(self.features) == data.columns.size, 'Some columns are missing'
 
-        return data, labels
+            data.insert(0, 'Label', labels)
+            data.insert(0, 'Group', idx)
+            result = data if result is None else result.append(data, ignore_index=True, sort=False)
+        return result
+
+    def load_data(self):
+        frame: pd.DataFrame = self.load_frames()
+        y = frame.pop('Label')
+        g = frame.pop('Group')
+        return frame, y, g
+
 

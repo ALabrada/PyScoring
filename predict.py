@@ -14,18 +14,19 @@ def _predict(classifier, data, y_true):
     f1 = f1_score(y_true, y_pred, average="macro")
     kappa = cohen_kappa_score(y_true, y_pred)
 
-    print(f'acc={acc:.3f}, f1={f1:.3f}, kappa={kappa:.3f}')
+    print(f'acc={acc:.4f}, kappa={kappa:.4f}, f1={f1:.4f}')
     print(cm)
     print(" ")
 
     return y_pred
 
 
-def predict(model_path: str, data_path: str, n_folds: int = 0):
+def predict(model_path: str, data_path: str, features: str, n_folds: int = 0):
     print('Loading model from', model_path)
     classifier = load(model_path)
 
-    loader = DataLoader(dir_path=data_path)
+    loader = DataLoader(dir_path=data_path,
+                        features=features)
     data, labels = loader.load_data()
 
     if n_folds > 1:
@@ -45,9 +46,12 @@ if __name__ == '__main__':
                         help='File or directory that contains the training cases.')
     parser.add_argument('--model', type=str, required=True,
                         help='File that contains the trained model')
+    parser.add_argument('--features', type=str,
+                        help='Comma separated list of features or path of a file that contains the features.')
     parser.add_argument('--folds', type=int, default=0,
                         help='Number of folds for cross validation.')
     args = parser.parse_args()
     predict(model_path=args.model,
             data_path=args.data,
-            n_folds=args.folds)
+            n_folds=args.folds,
+            features=args.features)

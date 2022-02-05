@@ -13,7 +13,7 @@ from sklearn.pipeline import make_pipeline, Pipeline
 from sklearn.feature_selection import SelectorMixin
 from sklearn.feature_selection import mutual_info_classif, SelectKBest, SelectFromModel, RFE, RFECV
 from sklearn.feature_selection import SequentialFeatureSelector
-from imblearn.under_sampling import RandomUnderSampler
+from sklearn.model_selection import StratifiedGroupKFold
 from argparse import ArgumentParser
 import numpy as np
 import math
@@ -45,7 +45,8 @@ def _print_n_samples_each_class(labels):
         print("{}: {}".format(stages[c], n_samples))
 
 
-def _create_model(model: str, data, max_features: int):
+def _create_model(model: str, data, max_features: int, n_folds: int = 10, n_groups: int = 0):
+    cv = n_folds if n_groups <= 1 else StratifiedGroupKFold(n_splits=min(n_groups, n_folds))
     if model == 'DT':
         dt = DecisionTreeClassifier(
             max_depth=20,
@@ -57,6 +58,7 @@ def _create_model(model: str, data, max_features: int):
             dt,
             step=5,
             min_features_to_select=max_features,
+            cv=cv,
             scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
             n_jobs=4,
             verbose=3
@@ -72,6 +74,7 @@ def _create_model(model: str, data, max_features: int):
             rf,
             step=5,
             min_features_to_select=max_features,
+            cv=cv,
             scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
             n_jobs=4,
             verbose=3
@@ -82,6 +85,7 @@ def _create_model(model: str, data, max_features: int):
             svc,
             step=5,
             min_features_to_select=max_features,
+            cv=cv,
             scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
             n_jobs=4,
             verbose=3
@@ -91,6 +95,7 @@ def _create_model(model: str, data, max_features: int):
         sfs = SequentialFeatureSelector(
             GaussianNB(),
             n_features_to_select=max_features,
+            cv=cv,
             direction='backward',
             scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
             n_jobs=4
@@ -106,6 +111,7 @@ def _create_model(model: str, data, max_features: int):
         sfs = SequentialFeatureSelector(
             net,
             n_features_to_select=max_features,
+            cv=cv,
             direction='backward',
             scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
             n_jobs=4
@@ -116,6 +122,7 @@ def _create_model(model: str, data, max_features: int):
             LinearDiscriminantAnalysis(),
             step=1,
             min_features_to_select=max_features,
+            cv=cv,
             scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
             n_jobs=4,
             verbose=3
@@ -125,6 +132,7 @@ def _create_model(model: str, data, max_features: int):
             QuadraticDiscriminantAnalysis(),
             step=5,
             min_features_to_select=max_features,
+            cv=cv,
             scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
             n_jobs=4,
             verbose=3
@@ -133,6 +141,7 @@ def _create_model(model: str, data, max_features: int):
         sfs = SequentialFeatureSelector(
             GaussianMixture(),
             n_features_to_select=max_features,
+            cv=cv,
             direction='backward',
             scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
             n_jobs=4
@@ -147,27 +156,27 @@ def _create_model(model: str, data, max_features: int):
 
 
 def fselect(input_path: str, output_path: str, model_name: str, max_features: int = 40, balance: bool = False):
-    loader = DataLoader(dir_path=input_path)
-    data, labels = loader.load_data()
+    loader = DataLoader(dir_path=input_path, balance=balance)
+    data = loader.load_frames()
+    labels = data.pop('Label')
 
     print('Loaded dataset from', input_path)
     _print_n_samples_each_class(labels)
 
-    if balance:
-        data, labels = RandomUnderSampler().fit_resample(data, labels)
-        print('Balanced dataset:')
-        _print_n_samples_each_class(labels)
+    groups = data.pop('Group')
 
-    model = _create_model(model_name, data, max_features)
+    n_groups = groups.nunique()
+    model = _create_model(model_name, data, max_features, n_groups=n_groups)
     print('Selecting features...')
-    model = model.fit(data, labels)
+
+    model = model.fit(data, labels, groups=groups) if n_groups > 1 else model.fit(data, labels)
 
     if isinstance(model, Pipeline):
         mask = model.steps[-1][1].get_support()
     else:
         mask = model.get_support()
 
-    features = np.asarray(loader.all_features)[mask]
+    features = np.asarray(data.columns)[mask]
 
     if output_path:
         print('Saving selected features to', output_path)
