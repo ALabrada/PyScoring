@@ -3,7 +3,7 @@ from sklearn import svm
 from sklearn.metrics import make_scorer, accuracy_score, cohen_kappa_score, f1_score
 from sklearn.naive_bayes import GaussianNB
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, VotingClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 from sklearn.mixture import GaussianMixture
@@ -24,7 +24,7 @@ def _print_n_samples_each_class(labels):
         print("{}: {}".format(stages[c], n_samples))
 
 
-def _create_model(model: str, data):
+def _create_model(model: str, data, normalize=True):
     if model == 'DT':
         return DecisionTreeClassifier(
             max_depth=20,
@@ -45,21 +45,29 @@ def _create_model(model: str, data):
             dual=False,
             max_iter=2000,
             class_weight='balanced')
-        return make_pipeline(StandardScaler(), svc)
+        return make_pipeline(StandardScaler(), svc) if normalize else svc
     elif model == 'NB':
-        return make_pipeline(StandardScaler(), GaussianNB())
+        return make_pipeline(StandardScaler(), GaussianNB()) if normalize else GaussianNB()
     elif model == 'MLP':
         layers = math.ceil((data.shape[1] + len(stages))/2)
         net = MLPClassifier(hidden_layer_sizes=(layers,),
                             alpha=0.001,
                             max_iter=500)
-        return make_pipeline(StandardScaler(), net)
+        return make_pipeline(StandardScaler(), net) if normalize else net
     elif model == 'LDA':
         return LinearDiscriminantAnalysis()
     elif model == 'QDA':
         return QuadraticDiscriminantAnalysis()
     elif model == 'GMM':
         return GaussianMixture()
+    elif model == '*':
+        vote = VotingClassifier([
+            # ('RF', _create_model('RF', data)),
+            ('MLP', _create_model('MLP', data, normalize=False)),
+            ('LDA', _create_model('LDA', data, normalize=False)),
+            ('SVM', _create_model('SVM', data, normalize=False)),
+        ], flatten_transform=False)
+        return make_pipeline(StandardScaler(), vote)
     else:
         raise Exception(f'Invalid model {model}.')
 
@@ -108,8 +116,8 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--input', type=str, required=True,
                         help='Input file or directory that contains the training cases.')
-    parser.add_argument('--model', type=str, default='RF',
-                        choices=['DT', 'RF', 'SVM', 'NB', 'MLP', 'LDA', 'QDA', 'GMM'],
+    parser.add_argument('--model', type=str, default='*',
+                        choices=['DT', 'RF', 'SVM', 'NB', 'MLP', 'LDA', 'QDA', 'GMM', '*'],
                         help='Name of the classifier to build')
     parser.add_argument('--balance', action='store_true',
                         help='Balance the dataset')

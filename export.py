@@ -1,7 +1,14 @@
 from argparse import ArgumentParser
 from joblib import load
 from skl2onnx import convert_sklearn
-from skl2onnx.common.data_types import FloatTensorType
+from skl2onnx.common.data_types import FloatTensorType, Int64TensorType
+from sklearn.ensemble import VotingClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.svm import LinearSVC
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
+from sklearn.neural_network import MLPClassifier
+from loader import stages
+import os
 
 
 def export(model_path: str, output_path: str):
@@ -11,11 +18,31 @@ def export(model_path: str, output_path: str):
 
     print('Converting the classifier to ONNX')
     initial_type = [('features', FloatTensorType([None, features]))]
-    onx = convert_sklearn(classifier, initial_types=initial_type, verbose=1, target_opset=7)
+    final_type = [('label', Int64TensorType([None])), ('probabilities', FloatTensorType([None, len(stages)]))]
+    options = {'zipmap': False}
+    if isinstance(classifier, VotingClassifier):
+        options = {
+            LinearDiscriminantAnalysis: {'zipmap': False},
+            MLPClassifier: {'zipmap': False},
+            LinearSVC: {},
+        }
+        if classifier.voting == 'soft':
+            final_type[1] = ('probabilities', FloatTensorType([None, len(classifier.estimators) * len(stages)]))
 
-    print('Saving ONNX model to', output_path)
-    with open(output_path, "wb") as f:
-        f.write(onx.SerializeToString())
+    onx = convert_sklearn(
+        classifier,
+        name=os.path.basename(model_path),
+        initial_types=initial_type,
+        final_types=final_type,
+        options=options,
+        verbose=2)
+
+    if output_path:
+        print('Saving ONNX model to', output_path)
+        with open(output_path, "wb") as f:
+            f.write(onx.SerializeToString())
+
+    return onx
 
 
 if __name__ == '__main__':
