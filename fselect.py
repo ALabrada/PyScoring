@@ -5,6 +5,7 @@ from sklearn.metrics import make_scorer, accuracy_score, cohen_kappa_score, f1_s
 from sklearn.naive_bayes import GaussianNB
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import Perceptron
 from sklearn.neural_network import MLPClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 from sklearn.mixture import GaussianMixture
@@ -103,20 +104,20 @@ def _create_model(model: str, data, max_features: int, n_folds: int = 10, n_grou
         return make_pipeline(StandardScaler(), sfs)
     elif model == 'MLP':
         layers = math.ceil((data.shape[1] + len(stages))/2)
-        net = MLPClassifier(
-            hidden_layer_sizes=(layers,),
+        net = Perceptron(
             alpha=0.001,
             max_iter=500
         )
-        sfs = SequentialFeatureSelector(
+        rfe = RFECV(
             net,
-            n_features_to_select=max_features,
+            step=2,
+            min_features_to_select=max_features,
             cv=cv,
-            direction='backward',
             scoring=make_scorer(lambda x, y: f1_score(x, y, average="macro")),
-            n_jobs=4
+            n_jobs=4,
+            verbose=3
         )
-        return make_pipeline(StandardScaler(), sfs)
+        return make_pipeline(StandardScaler(), rfe)
     elif model == 'LDA':
         return RFECV(
             LinearDiscriminantAnalysis(),

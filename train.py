@@ -24,7 +24,25 @@ def _print_n_samples_each_class(labels):
         print("{}: {}".format(stages[c], n_samples))
 
 
-def _create_model(model: str, data, normalize=True):
+def _overlap(data, seq_len=2):
+    assert seq_len > 1
+    shape = np.shape(data)
+    count = shape[0]
+    result = np.zeros(shape=(count, seq_len) + shape[1:])
+    for start_idx in range(seq_len - 1):
+        fragment = data[:start_idx + 1]
+        fragment = np.pad(
+            fragment,
+            pad_width=[(seq_len - start_idx - 1, 0)] + [(0, 0) for _ in shape[1:]],
+            mode='edge',
+        )
+        result[start_idx] = np.reshape(fragment, newshape=(seq_len,) + shape[1:])
+    for start_idx in range(seq_len - 1, count):
+        result[start_idx] = np.reshape(data[start_idx-seq_len+1:start_idx+1], newshape=(seq_len,) + shape[1:])
+    return np.reshape(result, newshape=(count, -1) + shape[2:])
+
+
+def _create_model(model: str, n_features, seq_len=1, normalize=True):
     if model == 'DT':
         return DecisionTreeClassifier(
             max_depth=20,
@@ -43,16 +61,16 @@ def _create_model(model: str, data, normalize=True):
         svc = svm.LinearSVC(
             C=1,
             dual=False,
-            max_iter=2000,
+            max_iter=2000 + 500*seq_len,
             class_weight='balanced')
         return make_pipeline(StandardScaler(), svc) if normalize else svc
     elif model == 'NB':
         return make_pipeline(StandardScaler(), GaussianNB()) if normalize else GaussianNB()
     elif model == 'MLP':
-        layers = math.ceil((data.shape[1] + len(stages))/2)
+        layers = math.ceil((n_features + len(stages))/2)
         net = MLPClassifier(hidden_layer_sizes=(layers,),
                             alpha=0.001,
-                            max_iter=500)
+                            max_iter=500 + 100*seq_len)
         return make_pipeline(StandardScaler(), net) if normalize else net
     elif model == 'LDA':
         return LinearDiscriminantAnalysis()
@@ -62,21 +80,25 @@ def _create_model(model: str, data, normalize=True):
         return GaussianMixture()
     elif model == '*':
         vote = VotingClassifier([
-            # ('RF', _create_model('RF', data)),
-            ('MLP', _create_model('MLP', data, normalize=False)),
-            ('LDA', _create_model('LDA', data, normalize=False)),
-            ('SVM', _create_model('SVM', data, normalize=False)),
+            ('RF', _create_model('RF', n_features, seq_len=seq_len, normalize=False)),
+            ('MLP', _create_model('MLP', n_features, seq_len=seq_len, normalize=False)),
+            ('LDA', _create_model('LDA', n_features, seq_len=seq_len, normalize=False)),
+            ('SVM', _create_model('SVM', n_features, seq_len=seq_len, normalize=False)),
         ], flatten_transform=False)
         return make_pipeline(StandardScaler(), vote)
     else:
         raise Exception(f'Invalid model {model}.')
 
 
-def train(input_path: str, output_path: str, model_name: str, features: str, balance: bool):
+def train(input_path: str, output_path: str, model_name: str, features: str, seq_len: int, balance: bool):
     loader = DataLoader(dir_path=input_path, features=features, balance=balance)
     data, labels, _ = loader.load_data()
+    n_features = data.shape[1]
 
-    trainer = _create_model(model_name, data)
+    if seq_len > 1:
+        data = _overlap(data, seq_len=seq_len)
+
+    trainer = _create_model(model_name, n_features=n_features, seq_len=seq_len)
     classifier = trainer.fit(data, labels)
 
     if output_path:
@@ -84,13 +106,18 @@ def train(input_path: str, output_path: str, model_name: str, features: str, bal
     return classifier
 
 
-def cross(input_path: str, model_name: str, n_folds: int, features: str, balance: bool):
+def cross(input_path: str, model_name: str, n_folds: int, features: str, seq_len: int, balance: bool):
     loader = DataLoader(dir_path=input_path, features=features, balance=balance)
     data, labels, groups = loader.load_data()
+    n_features = data.shape[1]
+
+    if seq_len > 1:
+        data = _overlap(data, seq_len=seq_len)
+
     print('Loaded dataset from', input_path)
     _print_n_samples_each_class(labels)
 
-    trainer = _create_model(model_name, data)
+    trainer = _create_model(model_name, n_features=n_features, seq_len=seq_len)
     scorers = {
         'accuracy': make_scorer(accuracy_score),
         'kappa': make_scorer(cohen_kappa_score),
@@ -112,7 +139,7 @@ def cross(input_path: str, model_name: str, n_folds: int, features: str, balance
                               n_jobs=4)
 
 
-if __name__ == '__main__':
+def main():
     parser = ArgumentParser()
     parser.add_argument('--input', type=str, required=True,
                         help='Input file or directory that contains the training cases.')
@@ -123,6 +150,8 @@ if __name__ == '__main__':
                         help='Balance the dataset')
     parser.add_argument('--features', type=str,
                         help='Comma separated list of features or path of a file that contains the features.')
+    parser.add_argument('--seq_len', type=int, default=1,
+                        help='')
     parser.add_argument('--folds', type=int, default=0,
                         help='Number of folds for cross validation.')
     parser.add_argument('--output', type=str,
@@ -134,6 +163,7 @@ if __name__ == '__main__':
               output_path=args.output,
               model_name=args.model,
               features=args.features,
+              seq_len=args.seq_len,
               balance=args.balance)
         print('Trained model saved to', args.output)
     if args.folds and args.folds > 1:
@@ -142,8 +172,12 @@ if __name__ == '__main__':
                        model_name=args.model,
                        n_folds=args.folds,
                        features=args.features,
+                       seq_len=args.seq_len,
                        balance=args.balance)
         print('Scoring results:')
         for (key, value) in scores.items():
             print(f'{key} = {np.mean(value):.4f} ± {np.std(value):.4f} ({np.min(value):.2f} - {np.max(value):.2f})')
 
+
+if __name__ == '__main__':
+    main()
