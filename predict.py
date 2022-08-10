@@ -1,5 +1,5 @@
 from loader import DataLoader, stages
-from sklearn.metrics import confusion_matrix, accuracy_score, cohen_kappa_score, f1_score
+from sklearn.metrics import confusion_matrix, accuracy_score, cohen_kappa_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import KFold, StratifiedGroupKFold
 from argparse import ArgumentParser
 import numpy as np
@@ -24,10 +24,20 @@ def _overlap(data, seq_len=2):
     return np.reshape(result, newshape=(count, -1) + shape[2:])
 
 
-def _predict(classifier, data, y_true):
+def _predict(classifier, data, y_true, min_prob: float = 0):
     start_time = time.time()
 
-    y_pred = classifier.predict(data)
+    if min_prob:
+        n_examples = len(y_true)
+        logits = classifier.predict_proba(data)
+        y_pred = np.argmax(logits, axis=1)
+        valid = np.max(logits, axis=1) > min_prob
+        y_true = y_true[valid]
+        y_pred = y_pred[valid]
+        n_prec = len(y_pred)
+        print("{:.2%} epochs above {} certainty ({}/{})".format(n_prec / n_examples, min_prob, n_prec, n_examples))
+    else:
+        y_pred = classifier.predict(data)
 
     duration = time.time() - start_time
 
@@ -40,10 +50,18 @@ def _predict(classifier, data, y_true):
     print(cm)
     print(" ")
 
+    label_f1 = f1_score(y_true, y_pred, average=None)
+    label_pre = precision_score(y_true, y_pred, average=None)
+    label_rec = recall_score(y_true, y_pred, average=None)
+
+    for idx, name in enumerate(stages):
+        print(f'{name}: f1={label_f1[idx]:.4f}, pre={label_pre[idx]:.4f}, rec={label_rec[idx]:.4f}')
+    print(" ")
+
     return y_pred
 
 
-def predict(model_path: str, data_path: str, features: str, seq_len: int = 1,  n_folds: int = 0):
+def predict(model_path: str, data_path: str, features: str, seq_len: int = 1,  n_folds: int = 0, min_prob: float = 0):
     print('Loading model from', model_path)
     classifier = load(model_path)
 
@@ -65,10 +83,10 @@ def predict(model_path: str, data_path: str, features: str, seq_len: int = 1,  n
         for idx, fold in enumerate(folds.split(data)):
             print("Fold", idx + 1)
             train, test = fold
-            _predict(classifier, data[test], labels[test])
+            _predict(classifier, data[test], labels[test], min_prob=min_prob)
     else:
         print('Classifier performance:')
-        _predict(classifier, data, labels)
+        _predict(classifier, data, labels, min_prob=min_prob)
 
 
 if __name__ == '__main__':
@@ -83,9 +101,12 @@ if __name__ == '__main__':
                         help='')
     parser.add_argument('--folds', type=int, default=0,
                         help='Number of folds for cross validation.')
+    parser.add_argument('--min_prob', type=float, default=0.0,
+                        help='Minimum required probability to classify an epoch.')
     args = parser.parse_args()
     predict(model_path=args.model,
             data_path=args.data,
             n_folds=args.folds,
             seq_len=args.seq_len,
-            features=args.features)
+            features=args.features,
+            min_prob=args.min_prob)

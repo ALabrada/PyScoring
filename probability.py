@@ -1,7 +1,7 @@
 from loader import DataLoader, stages
 from sklearn import svm
-from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import make_scorer, accuracy_score, cohen_kappa_score, f1_score
+from sklearn.linear_model import SGDClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier, VotingClassifier
@@ -11,7 +11,7 @@ from sklearn.mixture import GaussianMixture
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.pipeline import make_pipeline
-from sklearn.model_selection import cross_validate, StratifiedGroupKFold
+from sklearn.model_selection import cross_val_predict, StratifiedGroupKFold
 from imblearn.under_sampling import RandomUnderSampler
 from argparse import ArgumentParser
 import numpy as np
@@ -100,23 +100,7 @@ def _create_model(model: str, n_features, seq_len=1, normalize=True):
         raise Exception(f'Invalid model {model}.')
 
 
-def train(input_path: str, output_path: str, model_name: str, features: str, seq_len: int, balance: bool):
-    loader = DataLoader(dir_path=input_path, features=features, balance=balance)
-    data, labels, _ = loader.load_data()
-    n_features = data.shape[1]
-
-    if seq_len > 1:
-        data = _overlap(data, seq_len=seq_len)
-
-    trainer = _create_model(model_name, n_features=n_features, seq_len=seq_len)
-    classifier = trainer.fit(data, labels)
-
-    if output_path:
-        dump(classifier, output_path)
-    return classifier
-
-
-def cross(input_path: str, model_name: str, n_folds: int, features: str, seq_len: int, balance: bool):
+def cross(input_path: str, model_name: str, n_folds: int, features: str, seq_len: int, balance: bool, min_prob=0):
     loader = DataLoader(dir_path=input_path, features=features, balance=balance)
     data, labels, groups = loader.load_data()
     n_features = data.shape[1]
@@ -128,25 +112,27 @@ def cross(input_path: str, model_name: str, n_folds: int, features: str, seq_len
     _print_n_samples_each_class(labels)
 
     trainer = _create_model(model_name, n_features=n_features, seq_len=seq_len)
-    scorers = {
-        'accuracy': make_scorer(accuracy_score),
-        'kappa': make_scorer(cohen_kappa_score),
-        'f1': make_scorer(lambda x, y: f1_score(x, y, average="macro"))
-    }
     n_groups = groups.nunique()
     if n_groups <= n_folds:
-        return cross_validate(trainer, data, labels,
-                              cv=n_folds,
-                              scoring=scorers,
-                              verbose=3,
-                              n_jobs=4)
+        cv = n_folds
     else:
         cv = StratifiedGroupKFold(n_splits=n_folds)
-        return cross_validate(trainer, data, labels,
-                              cv=cv,
-                              scoring=scorers,
-                              verbose=3,
-                              n_jobs=4)
+    probabilities = cross_val_predict(trainer, data, labels,
+                                      cv=cv,
+                                      method='predict_proba',
+                                      verbose=3,
+                                      n_jobs=4)
+    mask = np.max(probabilities, axis=1) > min_prob
+    y_true = labels[mask]
+    y_pred = np.argmax(probabilities[mask, :], axis=1)
+
+    print("{:.2%} epochs above {} certainty".format(y_true.shape[0] / labels.shape[0], min_prob))
+
+    acc = accuracy_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred, average="macro")
+    kappa = cohen_kappa_score(y_true, y_pred)
+
+    print(f'acc={acc:.4f}, kappa={kappa:.4f}, f1={f1:.4f}')
 
 
 def main():
@@ -166,27 +152,17 @@ def main():
                         help='Number of folds for cross validation.')
     parser.add_argument('--output', type=str,
                         help='Path where to save the trained model ')
+    parser.add_argument('--min_prob', type=float, default=0.5,
+                        help='Minimum required probability to classify an epoch.')
     args = parser.parse_args()
-    if args.output:
-        print('Training classifier')
-        train(input_path=args.input,
-              output_path=args.output,
-              model_name=args.model,
-              features=args.features,
-              seq_len=args.seq_len,
-              balance=args.balance)
-        print('Trained model saved to', args.output)
-    if args.folds and args.folds > 1:
-        print(f'Performing {args.folds}-fold cross-validation')
-        scores = cross(input_path=args.input,
-                       model_name=args.model,
-                       n_folds=args.folds,
-                       features=args.features,
-                       seq_len=args.seq_len,
-                       balance=args.balance)
-        print('Scoring results:')
-        for (key, value) in scores.items():
-            print(f'{key} = {np.mean(value):.4f} ± {np.std(value):.4f} ({np.min(value):.2f} - {np.max(value):.2f})')
+    print(f'Performing {args.folds}-fold cross-validation')
+    cross(input_path=args.input,
+          model_name=args.model,
+          n_folds=args.folds,
+          features=args.features,
+          seq_len=args.seq_len,
+          balance=args.balance,
+          min_prob=args.min_prob)
 
 
 if __name__ == '__main__':
