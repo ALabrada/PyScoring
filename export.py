@@ -19,7 +19,7 @@ def export(model_path: str, output_path: str):
     print('Converting the classifier to ONNX')
     initial_type = [('features', FloatTensorType([None, features]))]
     final_type = [('label', Int64TensorType([None])), ('probabilities', FloatTensorType([None, len(stages)]))]
-    options = {'zipmap': False}
+    options = {}
     if isinstance(classifier, VotingClassifier):
         options = {
             LinearDiscriminantAnalysis: {'zipmap': False},
