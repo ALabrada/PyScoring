@@ -1,7 +1,7 @@
 # PyScoring
 Trainer of Machine Learning algorithms for sleep stage scoring. Allows to train scoring algorithms, to perform feature selection, to evaluate the performance and to export trained models to ONNX format.
 
-##Requirements
+## Requirements
 The application was tested in Python 3.7 with the following packages:
 
 - numpy (1.21.5)
@@ -9,7 +9,7 @@ The application was tested in Python 3.7 with the following packages:
 - pandas (0.24.2)
 - h5py (2.10.0): Only for reading HDF5 files
 
-##Usage
+## Usage
 Select 35 features for a Support Vector Machine (SVM) model from a dataset stored in a CSV file and save them in a text file:
 
 `python fselect.py --input "scoring-features.csv" --model SVM --features 35 --output "features/SVM.txt"`
