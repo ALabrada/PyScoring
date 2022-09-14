@@ -9,9 +9,10 @@ stages = ['Wake', 'N1', 'N2', 'N3', 'REM']
 
 
 class DataLoader:
-    def __init__(self, dir_path: str, features: str = None, balance: bool = False):
+    def __init__(self, dir_path: str, features: str = None, balance: bool = False, labels: list = None):
         self.dir_path = dir_path
         self.balance = balance
+        self.labels = labels
         if features and os.path.exists(features) and os.path.isfile(features):
             with open(features, 'r') as f:
                 self.features = [line.rstrip('\n') for line in f.readlines()]
@@ -37,14 +38,22 @@ class DataLoader:
             labels = np.asarray(f.get("y"), dtype=np.str_)
             headers = np.asarray(f.get("features"), dtype=np.str_)
         frame = pd.DataFrame(data, columns=headers)
-        labels = pd.Series(data=labels).map({value: idx for idx, value in enumerate(stages)})
+        if labels.dtype == int:
+            labels = pd.Series(data=labels).map({value: idx for idx, value in enumerate(stages)})
+        else:
+            labels = pd.DataFrame(labels, columns=self.labels) if self.labels else pd.Series(data=labels)
         return frame, labels
 
     def _load_csv_file(self, csv_file: str):
         """Load data and labels from a CSV file."""
         frame: pd.DataFrame = pd.read_csv(csv_file, encoding='utf-8-sig')
-        labels = frame.pop('Label')
-        labels = labels.map({value: idx for idx, value in enumerate(stages)})
+        if self.labels:
+            labels = {l: frame.pop(l) for l in self.labels}
+            labels = pd.DataFrame.from_dict(labels)
+        else:
+            labels = frame.pop('Label')
+            if labels.dtype == int:
+                labels = labels.map({value: idx for idx, value in enumerate(stages)})
         return frame, labels
 
     def load_frames(self):
@@ -69,14 +78,23 @@ class DataLoader:
                         data.pop(c)
                 assert len(self.features) == data.columns.size, 'Some columns are missing'
 
-            data.insert(0, 'Label', labels)
+            if self.labels:
+                labels = labels.to_dict(orient='list')
+                for l, values in labels.items():
+                    data.insert(0, l, values)
+            else:
+                data.insert(0, 'Label', labels)
             data.insert(0, 'Group', idx)
             result = data if result is None else result.append(data, ignore_index=True, sort=False)
         return result
 
     def load_data(self):
         frame: pd.DataFrame = self.load_frames()
-        y = frame.pop('Label')
+        if self.labels:
+            y = {l: frame.pop(l) for l in self.labels}
+            y = pd.DataFrame.from_dict(y)
+        else:
+            y = frame.pop('Label')
         g = frame.pop('Group')
         return frame, y, g
 
